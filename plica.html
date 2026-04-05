@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plica — Zine Architect</title>
+    <!--
+      Local Dependencies (lib/)
+      ========================
+      tailwind.js        — Tailwind CSS v3.4.17  (https://cdn.tailwindcss.com)
+      react.production.min.js     — React v18.3.1        (https://unpkg.com/react@18.3.1/umd/react.production.min.js)
+      react-dom.production.min.js — ReactDOM v18.3.1     (https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js)
+      babel.min.js       — Babel Standalone v7.26.10 (https://unpkg.com/@babel/standalone@7.26.10/babel.min.js)
+      pdf-lib.min.js     — pdf-lib v1.17.1       (https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js)
+    -->
+    <script src="lib/tailwind.js"></script>
+    <script src="lib/react.production.min.js"></script>
+    <script src="lib/react-dom.production.min.js"></script>
+    <script src="lib/babel.min.js"></script>
+    <script src="lib/pdf-lib.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,800;1,800&display=swap');
+        body { font-family: 'JetBrains Mono', monospace; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const PlicaApp = () => {
+          const [file, setFile] = useState(null);
+          const [processing, setProcessing] = useState(false);
+          const [error, setError] = useState(null);
+          const [libLoaded, setLibLoaded] = useState(false);
+          const [downloadName, setDownloadName] = useState(null);
+          const [options, setOptions] = useState({
+            showFoldLine: false,
+            showTrimMarks: true,
+            targetSize: 'LETTER',
+          });
+
+          const fileInputRef = useRef(null);
+
+          useEffect(() => {
+            // Check if PDFLib is already available via the script tag
+            if (window.PDFLib) {
+              setLibLoaded(true);
+            } else {
+                // Fallback interval if loading is delayed
+                const interval = setInterval(() => {
+                    if (window.PDFLib) {
+                        setLibLoaded(true);
+                        clearInterval(interval);
+                    }
+                }, 100);
+                return () => clearInterval(interval);
+            }
+          }, []);
+
+          const PAGE_SIZES = {
+            LETTER: { width: 792, height: 612 },
+            A4: { width: 841.89, height: 595.28 },
+          };
+
+          const handleFileChange = (e) => {
+            const selectedFile = e.target.files[0];
+            if (!selectedFile) return;
+            if (selectedFile.type === 'application/pdf') {
+              setFile(selectedFile);
+              setError(null);
+            } else {
+              setError('Please upload a valid PDF file.');
+            }
+          };
+
+          const drawTrimMarks = (page, x, y, width, height, pageWidth, pageHeight, PDFLib) => {
+            const { rgb } = PDFLib;
+            const lineLen = 20;
+            const thickness = 0.5;
+            const color = rgb(0.7, 0.7, 0.7);
+            const dashArray = [2, 2];
+
+            // Top edge: horizontal lines extending inward from left and right page edges
+            page.drawLine({ start: { x: 0, y: y + height }, end: { x: lineLen, y: y + height }, thickness, color, dashArray });
+            page.drawLine({ start: { x: pageWidth - lineLen, y: y + height }, end: { x: pageWidth, y: y + height }, thickness, color, dashArray });
+
+            // Bottom edge: horizontal lines extending inward from left and right page edges
+            page.drawLine({ start: { x: 0, y }, end: { x: lineLen, y }, thickness, color, dashArray });
+            page.drawLine({ start: { x: pageWidth - lineLen, y }, end: { x: pageWidth, y }, thickness, color, dashArray });
+
+            // Center (fold line) trim marks — inverted T at top, T at bottom
+            const center = pageWidth / 2;
+            page.drawLine({ start: { x: center - lineLen / 2, y: y + height }, end: { x: center + lineLen / 2, y: y + height }, thickness, color, dashArray });
+            page.drawLine({ start: { x: center, y: y + height }, end: { x: center, y: y + height + lineLen }, thickness, color, dashArray });
+            page.drawLine({ start: { x: center - lineLen / 2, y }, end: { x: center + lineLen / 2, y }, thickness, color, dashArray });
+            page.drawLine({ start: { x: center, y }, end: { x: center, y: y - lineLen }, thickness, color, dashArray });
+          };
+
+          const generateZine = async () => {
+            if (!file || !libLoaded) return;
+            const PDFLib = window.PDFLib;
+            const { PDFDocument, rgb } = PDFLib;
+
+            // Open preview window immediately while still in user gesture context
+            const preview = window.open('', '_blank');
+
+            setProcessing(true);
+            setError(null);
+            setDownloadName(null);
+
+            try {
+              const arrayBuffer = await file.arrayBuffer();
+              const srcDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+              const srcPages = srcDoc.getPages();
+              let pageCount = srcPages.length;
+
+              const firstPage = srcPages[0].getSize();
+              srcPages.forEach((p, i) => {
+                const s = p.getSize();
+                if (Math.abs(s.width - firstPage.width) > 2 || Math.abs(s.height - firstPage.height) > 2) {
+                  throw new Error(`Inconsistent page size at page ${i + 1}. All pages must be identical.`);
+                }
+              });
+
+              const paddedCount = Math.ceil(pageCount / 4) * 4;
+              const physicalSheets = paddedCount / 4;
+
+              const outDoc = await PDFDocument.create();
+              const targetDim = PAGE_SIZES[options.targetSize];
+              const halfWidth = targetDim.width / 2;
+              const halfHeight = targetDim.height;
+
+              const scale = Math.min(halfWidth / firstPage.width, halfHeight / firstPage.height);
+              const scaledW = firstPage.width * scale;
+              const scaledH = firstPage.height * scale;
+              const xOffset = Math.abs(halfWidth - scaledW) < 1 ? 0 : (halfWidth - scaledW) / 2;
+              const yOffset = Math.abs(halfHeight - scaledH) < 1 ? 0 : (halfHeight - scaledH) / 2;
+
+              for (let s = 0; s < physicalSheets; s++) {
+                const frontPage = outDoc.addPage([targetDim.width, targetDim.height]);
+                const fLeftIdx = paddedCount - (2 * s) - 1;
+                if (fLeftIdx < pageCount) {
+                  const [embedded] = await outDoc.embedPages([srcPages[fLeftIdx]]);
+                  frontPage.drawPage(embedded, { x: xOffset, y: yOffset, width: scaledW, height: scaledH });
+                }
+                const fRightIdx = 2 * s;
+                if (fRightIdx < pageCount) {
+                  const [embedded] = await outDoc.embedPages([srcPages[fRightIdx]]);
+                  frontPage.drawPage(embedded, { x: halfWidth + xOffset, y: yOffset, width: scaledW, height: scaledH });
+                }
+                if (options.showTrimMarks && s === 0) {
+                    drawTrimMarks(frontPage, xOffset, yOffset, scaledW, scaledH, targetDim.width, targetDim.height, PDFLib);
+                }
+                if (options.showFoldLine) {
+                    frontPage.drawLine({
+                        start: { x: halfWidth, y: 10 },
+                        end: { x: halfWidth, y: targetDim.height - 10 },
+                        thickness: 0.25,
+                        dashArray: [2, 2],
+                        color: rgb(0.8, 0.8, 0.8)
+                    });
+                }
+
+                const backPage = outDoc.addPage([targetDim.width, targetDim.height]);
+                const bLeftIdx = (2 * s) + 1;
+                if (bLeftIdx < pageCount) {
+                  const [embedded] = await outDoc.embedPages([srcPages[bLeftIdx]]);
+                  backPage.drawPage(embedded, {
+                    x: xOffset + scaledW,
+                    y: yOffset + scaledH,
+                    xScale: -scale,
+                    yScale: -scale,
+                  });
+                }
+                const bRightIdx = paddedCount - (2 * s) - 2;
+                if (bRightIdx < pageCount) {
+                  const [embedded] = await outDoc.embedPages([srcPages[bRightIdx]]);
+                  backPage.drawPage(embedded, {
+                    x: halfWidth + xOffset + scaledW,
+                    y: yOffset + scaledH,
+                    xScale: -scale,
+                    yScale: -scale,
+                  });
+                }
+                if (options.showFoldLine) {
+                    backPage.drawLine({
+                        start: { x: halfWidth, y: 10 },
+                        end: { x: halfWidth, y: targetDim.height - 10 },
+                        thickness: 0.25,
+                        dashArray: [2, 2],
+                        color: rgb(0.8, 0.8, 0.8)
+                    });
+                }
+              }
+
+              const pdfBytes = await outDoc.save();
+              const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+              const url = URL.createObjectURL(blob);
+              const outName = `plica_${file.name.replace('.pdf', '')}_booklet.pdf`;
+              const link = document.createElement('a');
+              link.href = url;
+              link.download = outName;
+              link.click();
+              preview.location.href = url;
+              setDownloadName(outName);
+            } catch (err) {
+              setError(err.message || 'An error occurred during imposition.');
+            } finally {
+              setProcessing(false);
+            }
+          };
+
+          return (
+            <div className="min-h-screen bg-zinc-50 text-zinc-900 p-4 md:p-8 flex flex-col items-center">
+              <header className="w-full max-w-2xl mb-12 border-b-4 border-zinc-900 pb-4">
+                <h1 className="text-5xl font-black tracking-tighter uppercase italic">Plica</h1>
+                <p className="text-sm font-bold opacity-70">Zero-Waste Zine Imposition Engine</p>
+              </header>
+
+              <main className="w-full max-w-2xl flex flex-col gap-8">
+                <div onClick={() => fileInputRef.current.click()} className={`border-4 border-dashed p-12 flex flex-col items-center justify-center cursor-pointer transition-all ${file ? 'border-zinc-900 bg-white scale-[1.01]' : 'border-zinc-300 hover:border-zinc-900 bg-zinc-100'} ${!libLoaded ? 'opacity-50 cursor-wait' : ''}`}>
+                  <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".pdf" className="hidden" disabled={!libLoaded} />
+                  {!libLoaded ? <p className="font-bold animate-pulse">INITIATING ENGINE...</p> : file ? (
+                    <div className="text-center">
+                      <p className="text-lg font-bold uppercase">READY: {file.name}</p>
+                      <button onClick={(e) => { e.stopPropagation(); setFile(null); }} className="mt-6 px-4 py-2 border-2 border-zinc-900 text-[10px] font-black hover:bg-zinc-900 hover:text-white transition-colors">DISCARD FILE</button>
+                    </div>
+                  ) : <div className="text-center"><div className="mb-4 text-4xl">⇪</div><p className="font-bold">DROP SOURCE PDF</p></div>}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-4 border-zinc-900 p-6 bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
+                  <div className="flex flex-col gap-4">
+                    <h3 className="font-black uppercase text-xs border-b-2 border-zinc-900 w-fit mb-2">Format</h3>
+                    <label className="flex items-center gap-3 cursor-pointer"><input type="radio" checked={options.targetSize === 'LETTER'} onChange={() => setOptions(p => ({...p, targetSize: 'LETTER'}))} className="accent-zinc-900" /><span className="text-xs font-bold">LETTER (8.5x11)</span></label>
+                    <label className="flex items-center gap-3 cursor-pointer"><input type="radio" checked={options.targetSize === 'A4'} onChange={() => setOptions(p => ({...p, targetSize: 'A4'}))} className="accent-zinc-900" /><span className="text-xs font-bold">A4 (210x297mm)</span></label>
+                  </div>
+                  <div className="flex flex-col gap-4">
+                    <h3 className="font-black uppercase text-xs border-b-2 border-zinc-900 w-fit mb-2">Guides</h3>
+                    <label className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={options.showFoldLine} onChange={e => setOptions(p => ({...p, showFoldLine: e.target.checked}))} className="accent-zinc-900" /><span className="text-xs font-bold uppercase">FOLD LINE</span></label>
+                    <label className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={options.showTrimMarks} onChange={e => setOptions(p => ({...p, showTrimMarks: e.target.checked}))} className="accent-zinc-900" /><span className="text-xs font-bold uppercase">TRIM MARKS</span></label>
+                  </div>
+                </div>
+
+                <button disabled={!file || processing || !libLoaded} onClick={generateZine} className={`w-full py-6 font-black text-2xl uppercase tracking-[0.2em] transition-all ${!file || processing || !libLoaded ? 'bg-zinc-200 text-zinc-400 border-4 border-zinc-200' : 'bg-zinc-900 text-white border-4 border-zinc-900 hover:bg-white hover:text-zinc-900 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] active:translate-x-1 active:translate-y-1 active:shadow-none'}`}>
+                  {processing ? 'Calculating...' : 'Execute Plica'}
+                </button>
+
+                {error && <div className="border-4 border-red-600 p-4 text-red-600 font-bold text-xs uppercase">Architecture Failure: {error}</div>}
+                {downloadName && !error && <div className="border-4 border-zinc-900 p-4 font-bold text-xs uppercase">Saved to Downloads: {downloadName}</div>}
+              </main>
+            </div>
+          );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<PlicaApp />);
+    </script>
+</body>
+</html>
