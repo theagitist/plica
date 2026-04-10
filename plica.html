@@ -18,6 +18,7 @@
     <script src="lib/react-dom.production.min.js"></script>
     <script src="lib/babel.min.js"></script>
     <script src="lib/pdf-lib.min.js"></script>
+    <script src="lib/plica-core.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,800;1,800&display=swap');
         body { font-family: 'JetBrains Mono', monospace; }
@@ -35,10 +36,13 @@
           const [error, setError] = useState(null);
           const [libLoaded, setLibLoaded] = useState(false);
           const [downloadName, setDownloadName] = useState(null);
+          const [warning, setWarning] = useState(null);
           const [options, setOptions] = useState({
             showFoldLine: false,
             showTrimMarks: true,
             targetSize: 'LETTER',
+            pageFrom: '',
+            pageTo: '',
           });
 
           const fileInputRef = useRef(null);
@@ -59,11 +63,6 @@
             }
           }, []);
 
-          const PAGE_SIZES = {
-            LETTER: { width: 792, height: 612 },
-            A4: { width: 841.89, height: 595.28 },
-          };
-
           const handleFileChange = (e) => {
             const selectedFile = e.target.files[0];
             if (!selectedFile) return;
@@ -75,124 +74,24 @@
             }
           };
 
-          const drawTrimMarks = (page, x, y, width, height, pageWidth, pageHeight, PDFLib) => {
-            const { rgb } = PDFLib;
-            const lineLen = 20;
-            const thickness = 0.5;
-            const color = rgb(0.7, 0.7, 0.7);
-            const dashArray = [2, 2];
-
-            // Top edge: horizontal lines extending inward from left and right page edges
-            page.drawLine({ start: { x: 0, y: y + height }, end: { x: lineLen, y: y + height }, thickness, color, dashArray });
-            page.drawLine({ start: { x: pageWidth - lineLen, y: y + height }, end: { x: pageWidth, y: y + height }, thickness, color, dashArray });
-
-            // Bottom edge: horizontal lines extending inward from left and right page edges
-            page.drawLine({ start: { x: 0, y }, end: { x: lineLen, y }, thickness, color, dashArray });
-            page.drawLine({ start: { x: pageWidth - lineLen, y }, end: { x: pageWidth, y }, thickness, color, dashArray });
-
-            // Center (fold line) trim marks — inverted T at top, T at bottom
-            const center = pageWidth / 2;
-            page.drawLine({ start: { x: center - lineLen / 2, y: y + height }, end: { x: center + lineLen / 2, y: y + height }, thickness, color, dashArray });
-            page.drawLine({ start: { x: center, y: y + height }, end: { x: center, y: y + height + lineLen }, thickness, color, dashArray });
-            page.drawLine({ start: { x: center - lineLen / 2, y }, end: { x: center + lineLen / 2, y }, thickness, color, dashArray });
-            page.drawLine({ start: { x: center, y }, end: { x: center, y: y - lineLen }, thickness, color, dashArray });
-          };
-
           const generateZine = async () => {
             if (!file || !libLoaded) return;
             const PDFLib = window.PDFLib;
-            const { PDFDocument, rgb } = PDFLib;
 
             // Open preview window immediately while still in user gesture context
             const preview = window.open('', '_blank');
 
             setProcessing(true);
             setError(null);
+            setWarning(null);
             setDownloadName(null);
 
             try {
               const arrayBuffer = await file.arrayBuffer();
-              const srcDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
-              const srcPages = srcDoc.getPages();
-              let pageCount = srcPages.length;
-
-              const firstPage = srcPages[0].getSize();
-              srcPages.forEach((p, i) => {
-                const s = p.getSize();
-                if (Math.abs(s.width - firstPage.width) > 2 || Math.abs(s.height - firstPage.height) > 2) {
-                  throw new Error(`Inconsistent page size at page ${i + 1}. All pages must be identical.`);
-                }
-              });
-
-              const paddedCount = Math.ceil(pageCount / 4) * 4;
-              const physicalSheets = paddedCount / 4;
-
-              const outDoc = await PDFDocument.create();
-              const targetDim = PAGE_SIZES[options.targetSize];
-              const halfWidth = targetDim.width / 2;
-              const halfHeight = targetDim.height;
-
-              const scale = Math.min(halfWidth / firstPage.width, halfHeight / firstPage.height);
-              const scaledW = firstPage.width * scale;
-              const scaledH = firstPage.height * scale;
-              const xOffset = Math.abs(halfWidth - scaledW) < 1 ? 0 : (halfWidth - scaledW) / 2;
-              const yOffset = Math.abs(halfHeight - scaledH) < 1 ? 0 : (halfHeight - scaledH) / 2;
-
-              for (let s = 0; s < physicalSheets; s++) {
-                const frontPage = outDoc.addPage([targetDim.width, targetDim.height]);
-                const fLeftIdx = paddedCount - (2 * s) - 1;
-                if (fLeftIdx < pageCount) {
-                  const [embedded] = await outDoc.embedPages([srcPages[fLeftIdx]]);
-                  frontPage.drawPage(embedded, { x: xOffset, y: yOffset, width: scaledW, height: scaledH });
-                }
-                const fRightIdx = 2 * s;
-                if (fRightIdx < pageCount) {
-                  const [embedded] = await outDoc.embedPages([srcPages[fRightIdx]]);
-                  frontPage.drawPage(embedded, { x: halfWidth + xOffset, y: yOffset, width: scaledW, height: scaledH });
-                }
-                if (options.showTrimMarks && s === 0) {
-                    drawTrimMarks(frontPage, xOffset, yOffset, scaledW, scaledH, targetDim.width, targetDim.height, PDFLib);
-                }
-                if (options.showFoldLine) {
-                    frontPage.drawLine({
-                        start: { x: halfWidth, y: 10 },
-                        end: { x: halfWidth, y: targetDim.height - 10 },
-                        thickness: 0.25,
-                        dashArray: [2, 2],
-                        color: rgb(0.8, 0.8, 0.8)
-                    });
-                }
-
-                const backPage = outDoc.addPage([targetDim.width, targetDim.height]);
-                const bLeftIdx = (2 * s) + 1;
-                if (bLeftIdx < pageCount) {
-                  const [embedded] = await outDoc.embedPages([srcPages[bLeftIdx]]);
-                  backPage.drawPage(embedded, {
-                    x: xOffset + scaledW,
-                    y: yOffset + scaledH,
-                    xScale: -scale,
-                    yScale: -scale,
-                  });
-                }
-                const bRightIdx = paddedCount - (2 * s) - 2;
-                if (bRightIdx < pageCount) {
-                  const [embedded] = await outDoc.embedPages([srcPages[bRightIdx]]);
-                  backPage.drawPage(embedded, {
-                    x: halfWidth + xOffset + scaledW,
-                    y: yOffset + scaledH,
-                    xScale: -scale,
-                    yScale: -scale,
-                  });
-                }
-                if (options.showFoldLine) {
-                    backPage.drawLine({
-                        start: { x: halfWidth, y: 10 },
-                        end: { x: halfWidth, y: targetDim.height - 10 },
-                        thickness: 0.25,
-                        dashArray: [2, 2],
-                        color: rgb(0.8, 0.8, 0.8)
-                    });
-                }
+              const srcDoc = await PDFLib.PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+              const { outDoc, sourcePages, padded } = await PlicaCore.imposeBooklet(PDFLib, srcDoc, options);
+              if (padded > 0) {
+                setWarning(`${sourcePages} pages is not divisible by 4 — ${padded} blank page${padded > 1 ? 's' : ''} appended to complete the signature.`);
               }
 
               const pdfBytes = await outDoc.save();
@@ -230,7 +129,7 @@
                   ) : <div className="text-center"><div className="mb-4 text-4xl">⇪</div><p className="font-bold">DROP SOURCE PDF</p></div>}
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-4 border-zinc-900 p-6 bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-4 border-zinc-900 p-6 bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
                   <div className="flex flex-col gap-4">
                     <h3 className="font-black uppercase text-xs border-b-2 border-zinc-900 w-fit mb-2">Format</h3>
                     <label className="flex items-center gap-3 cursor-pointer"><input type="radio" checked={options.targetSize === 'LETTER'} onChange={() => setOptions(p => ({...p, targetSize: 'LETTER'}))} className="accent-zinc-900" /><span className="text-xs font-bold">LETTER (8.5x11)</span></label>
@@ -241,6 +140,17 @@
                     <label className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={options.showFoldLine} onChange={e => setOptions(p => ({...p, showFoldLine: e.target.checked}))} className="accent-zinc-900" /><span className="text-xs font-bold uppercase">FOLD LINE</span></label>
                     <label className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={options.showTrimMarks} onChange={e => setOptions(p => ({...p, showTrimMarks: e.target.checked}))} className="accent-zinc-900" /><span className="text-xs font-bold uppercase">TRIM MARKS</span></label>
                   </div>
+                  <div className="flex flex-col gap-4">
+                    <h3 className="font-black uppercase text-xs border-b-2 border-zinc-900 w-fit mb-2">Page Range</h3>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold">FROM</span>
+                      <input type="number" min="1" placeholder="1" value={options.pageFrom} onChange={e => setOptions(p => ({...p, pageFrom: e.target.value}))} className="w-16 border-2 border-zinc-900 px-2 py-1 text-xs font-bold text-center bg-white" />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold">TO{"  "}</span>
+                      <input type="number" min="1" placeholder="end" value={options.pageTo} onChange={e => setOptions(p => ({...p, pageTo: e.target.value}))} className="w-16 border-2 border-zinc-900 px-2 py-1 text-xs font-bold text-center bg-white" />
+                    </div>
+                  </div>
                 </div>
 
                 <button disabled={!file || processing || !libLoaded} onClick={generateZine} className={`w-full py-6 font-black text-2xl uppercase tracking-[0.2em] transition-all ${!file || processing || !libLoaded ? 'bg-zinc-200 text-zinc-400 border-4 border-zinc-200' : 'bg-zinc-900 text-white border-4 border-zinc-900 hover:bg-white hover:text-zinc-900 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] active:translate-x-1 active:translate-y-1 active:shadow-none'}`}>
@@ -248,6 +158,7 @@
                 </button>
 
                 {error && <div className="border-4 border-red-600 p-4 text-red-600 font-bold text-xs uppercase">Architecture Failure: {error}</div>}
+                {warning && !error && <div className="border-4 border-zinc-900 bg-yellow-300 p-4 font-bold text-xs uppercase">[!] Padding Notice: {warning}</div>}
                 {downloadName && !error && <div className="border-4 border-zinc-900 p-4 font-bold text-xs uppercase">Saved to Downloads: {downloadName}</div>}
               </main>
             </div>

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Plica — bash wrapper around plica.js
+# Resolves the script's real directory so it works via symlink (e.g. /usr/local/bin/plica).
+
+set -e
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "[X] node is required but not found in PATH" >&2
+  exit 127
+fi
+
+exec node "$DIR/plica.js" "$@"

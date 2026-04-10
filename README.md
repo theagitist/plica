@@ -31,12 +31,36 @@ Unlike commercial "booklet" print settings that over-scale and waste margins, Pl
 
 ## Usage
 
+### Browser (GUI)
+
 Open `plica.html` in any modern browser. No server or build step required.
 
 1. Upload a portrait-oriented PDF.
 2. Choose your output format (US Letter or A4).
 3. Toggle trim marks and fold line as needed.
 4. Click **Execute Plica** — the booklet is downloaded and previewed.
+
+### Command Line (CLI)
+
+Plica also ships as a Node.js script for scripting and batch use. It shares the same imposition engine (`lib/plica-core.js`) as the browser app.
+
+```sh
+./plica zine.pdf                                  # default: LETTER, no marks
+./plica zine.pdf -s A4 --fold-line --trim-marks   # A4 with guides
+./plica zine.pdf --from 3 --to 18 -o booklet.pdf  # page range + custom output
+./plica --help                                    # full options
+```
+
+**Requirements:** Node.js (any recent version). No `npm install` needed — `lib/pdf-lib.min.js` is bundled.
+
+**Install globally** (optional) by symlinking the wrapper into your `PATH`:
+
+```sh
+ln -s "$(pwd)/plica" /usr/local/bin/plica
+plica zine.pdf                                    # now usable from anywhere
+```
+
+The bash wrapper resolves symlinks correctly, so it can live anywhere on your `PATH`.
 
 ## Printing Protocol
 

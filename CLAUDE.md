@@ -2,9 +2,10 @@
 
 ## Build & Development
 
-- **No build step required.** Open `plica.html` directly in a browser.
-- **Dependencies:** All bundled locally in `lib/`. No internet connection needed.
+- **No build step required.** Open `plica.html` directly in a browser, or run `./plica <file.pdf>` for the CLI.
+- **Dependencies:** All bundled locally in `lib/`. No internet connection needed, no `npm install`.
 - **Engine:** pdf-lib v1.17.1 loaded from `lib/pdf-lib.min.js`.
+- **Shared core:** `lib/plica-core.js` is a UMD module containing the imposition logic. It is the single source of truth — both `plica.html` (browser) and `plica.js` (Node CLI) consume it. The wrappers only handle I/O; never duplicate imposition logic in them.
 
 ## Technical Standards
 
@@ -19,14 +20,16 @@
 
 ## Domain Logic: Zine Imposition
 
-- **Signatures:** Always 4-page signatures (Saddle-Stitched logic).
-- **Signature Formula:**
-    - Total Pages (N) must be a multiple of 4 (pad with blanks).
-    - For Sheet `i` (0-indexed):
-        - Front-Left: `N - (2*i)`
-        - Front-Right: `(2*i) + 1`
-        - Back-Left: `(2*i) + 2`
-        - Back-Right: `N - (2*i) - 1`
+- **Signatures:** Saddle-stitched booklet (all sheets nest together, staple at spine).
+- **Imposition Formula:**
+    - N_real = actual PDF page count (after page-range slicing).
+    - If N_real is not a multiple of 4, blank pages are auto-appended to reach the next multiple. Callers receive `padded` count and SHOULD surface a warning to the user (toast in browser, stderr in CLI), but the booklet is still generated.
+    - N = N_real + padded. Physical sheets = N / 4. All sheets are printed, folded, nested, and stapled.
+    - For Sheet `s` (0-indexed):
+        - Front-Left: `N - 1 - 2*s` (counts inward from last page)
+        - Front-Right: `2*s` (counts inward from first page)
+        - Back-Left: `N - 2 - 2*s` (pairs with Front-Left when folded)
+        - Back-Right: `2*s + 1` (pairs with Front-Right when folded)
 - **Back pages:** Rotated 180 degrees (negative xScale/yScale) for short-edge duplex printing.
 - **Scaling:** Maximize area while preserving aspect ratio.
     - `ScaleFactor = Math.min(targetHalfWidth / sourceWidth, targetHeight / sourceHeight)`.
