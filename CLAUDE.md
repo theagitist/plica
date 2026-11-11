@@ -10,12 +10,12 @@
 ## Technical Standards
 
 - **Architecture:** Standalone HTML with inline React (via Babel standalone). No framework, no server.
-- **Styling:** Tailwind CSS ONLY.
+- **Styling:** Tailwind CSS only (no custom CSS files).
 - **Design System:** "Industrial Brutalist"
     - Font: JetBrains Mono or standard system monospace.
     - Palette: High-contrast Zinc-900 (#18181b) and White (#ffffff).
     - UI Elements: 4px borders, 8px hard shadows, no rounded corners.
-    - Icons: **STRICTLY FORBIDDEN**. Use text-based indicators (e.g., [X], ->, +) or ASCII/UTF-8 symbols.
+    - Icons: none (no icon fonts or SVG icons); the design is text-only brutalist. Use text-based indicators (e.g., [X], ->, +) or ASCII/UTF-8 symbols.
 - **Privacy:** 100% Client-side. Do not implement server-side PDF processing.
 
 ## Domain Logic: Zine Imposition
@@ -23,7 +23,7 @@
 - **Signatures:** Saddle-stitched booklet (all sheets nest together, staple at spine).
 - **Imposition Formula:**
     - N_real = actual PDF page count (after page-range slicing).
-    - If N_real is not a multiple of 4, blank pages are auto-appended to reach the next multiple. Callers receive `padded` count and SHOULD surface a warning to the user (toast in browser, stderr in CLI), but the booklet is still generated.
+    - If N_real is not a multiple of 4, blank pages are auto-appended to reach the next multiple. Callers receive `padded` count and should surface a warning to the user (toast in browser, stderr in CLI), but the booklet is still generated.
     - N = N_real + padded. Physical sheets = N / 4. All sheets are printed, folded, nested, and stapled.
     - For Sheet `s` (0-indexed):
         - Front-Left: `N - 1 - 2*s` (counts inward from last page)
